@@ -4,7 +4,9 @@ import { PlusCircleIcon } from './icons';
 import { fetchQuote } from '../services/marketApi';
 
 interface AddTransactionFormProps {
-  onAddTransaction: (newTransaction: Omit<Transaction, 'id'>) => Promise<void>;
+  // FIX: The parent component `Dashboard` provides user_id and account_id.
+  // This component should not be responsible for them.
+  onAddTransaction: (newTransaction: Omit<Transaction, 'id' | 'user_id' | 'account_id'>) => Promise<void>;
   disabled?: boolean;
 }
 

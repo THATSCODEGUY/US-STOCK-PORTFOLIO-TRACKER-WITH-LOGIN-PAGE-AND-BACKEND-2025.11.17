@@ -62,7 +62,8 @@ export const TransactionHistoryTable: React.FC<TransactionHistoryTableProps> = (
         <div className="flex items-center flex-wrap gap-2">
            <button 
               onClick={handleImportClick} 
-              className="flex items-center justify-center py-2 px-3 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors"
+              className="flex items-center justify-center py-2 px-3 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled
            >
              <ArrowUpTrayIcon className="h-5 w-5 mr-2" />
              Import
@@ -73,7 +74,8 @@ export const TransactionHistoryTable: React.FC<TransactionHistoryTableProps> = (
             <div className="relative" ref={exportActiveRef}>
                 <button
                     onClick={() => setIsExportActiveOpen(prev => !prev)}
-                    className="flex items-center justify-center py-2 px-3 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors"
+                    className="flex items-center justify-center py-2 px-3 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled
                 >
                     <ArrowDownTrayIcon className="h-5 w-5 mr-2" />
                     Export Active
@@ -104,7 +106,8 @@ export const TransactionHistoryTable: React.FC<TransactionHistoryTableProps> = (
             <div className="relative" ref={exportAllRef}>
                 <button
                     onClick={() => setIsExportAllOpen(prev => !prev)}
-                    className="flex items-center justify-center py-2 px-3 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors"
+                    className="flex items-center justify-center py-2 px-3 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled
                 >
                     <ArrowDownTrayIcon className="h-5 w-5 mr-2" />
                     Export All

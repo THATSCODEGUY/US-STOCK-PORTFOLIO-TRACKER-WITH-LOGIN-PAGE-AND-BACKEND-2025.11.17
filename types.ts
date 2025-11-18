@@ -2,17 +2,20 @@ export type TransactionType = 'BUY' | 'SELL';
 
 export interface Transaction {
   id: string;
+  account_id: string;
+  user_id: string;
   ticker: string;
-  companyName: string;
+  companyName: string; // Mapped from company_name
   type: TransactionType;
   shares: number;
   price: number;
-  date: string;
+  date: string; // Mapped from transaction_date
   notes?: string;
 }
 
 export interface Account {
   id: string;
+  user_id: string;
   name: string;
   cash: number;
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../utils/supabaseClient';
 
 import { Header } from '../components/Header';
 import { PortfolioSummary } from '../components/PortfolioSummary';
@@ -18,12 +18,12 @@ import { ApiErrorBanner } from '../components/ApiErrorBanner';
 
 import { fetchQuote, fetchHistoricalData } from '../services/marketApi';
 import { exportTransactions, exportAllData, parseImportedFile } from '../utils/dataHandlers';
-import { sampleTransactions, LATEST_CHANGELOG_VERSION } from '../constants';
+import { LATEST_CHANGELOG_VERSION } from '../constants';
 
 import { type PortfolioData, type Transaction, type Account, type Position, type HistoricalDataPoint } from '../types';
 
 export const Dashboard: React.FC = () => {
-    const { signOut } = useAuth();
+    const { user, signOut } = useAuth();
     const [portfolioData, setPortfolioData] = useState<PortfolioData | null>(null);
     const [positions, setPositions] = useState<Position[]>([]);
     const [historicalPortfolioValue, setHistoricalPortfolioValue] = useState<HistoricalDataPoint[]>([]);
@@ -45,49 +45,94 @@ export const Dashboard: React.FC = () => {
        return parseInt(localStorage.getItem('seenChangelogVersion') || '0', 10);
     });
 
-    // Load data from localStorage on initial render
+    // Load data from Supabase when user session is available
     useEffect(() => {
-        try {
-            const savedData = localStorage.getItem('portfolioManagerData');
-            if (savedData) {
-                setPortfolioData(JSON.parse(savedData));
-            } else {
-                // One-time migration for old data structure
-                const oldTransactions = localStorage.getItem('stockPortfolioTransactions');
-                if (oldTransactions) {
-                    const defaultAccount: Account = { id: uuidv4(), name: 'My Portfolio', cash: 0 };
-                    const newPortfolioData: PortfolioData = {
-                        accounts: [defaultAccount],
-                        transactions: { [defaultAccount.id]: JSON.parse(oldTransactions) },
-                        activeAccountId: defaultAccount.id
-                    };
-                    setPortfolioData(newPortfolioData);
-                    localStorage.removeItem('stockPortfolioTransactions');
-                } else {
-                    // Create a fresh default state
-                    const defaultAccount: Account = { id: uuidv4(), name: 'My First Account', cash: 10000 };
-                    const newPortfolioData: PortfolioData = {
-                        accounts: [defaultAccount],
-                        transactions: { [defaultAccount.id]: sampleTransactions.map(t => ({...t, id: uuidv4()})) },
-                        activeAccountId: defaultAccount.id
-                    };
-                    setPortfolioData(newPortfolioData);
-                }
-            }
-        } catch (error) {
-            console.error("Failed to load or migrate data:", error);
-            // Handle corrupted data by resetting
-            localStorage.clear();
-        }
-        setIsLoading(false);
-    }, []);
+        if (!user) return;
 
-    // Save data to localStorage whenever it changes
+        const fetchData = async () => {
+            setIsLoading(true);
+
+            // Fetch accounts for the current user
+            const { data: accountsData, error: accountsError } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('user_id', user.id);
+            
+            if (accountsError) {
+                console.error('Error fetching accounts:', accountsError);
+                setIsLoading(false);
+                return;
+            }
+
+            let finalAccounts: Account[] = accountsData || [];
+            
+            // If it's a new user with no accounts, create a default one
+            if (finalAccounts.length === 0) {
+                const { data: newAccountData, error: newAccountError } = await supabase
+                    .from('accounts')
+                    .insert({ user_id: user.id, name: 'My First Account', cash: 10000 })
+                    .select()
+                    .single();
+
+                if (newAccountError || !newAccountData) {
+                    console.error('Error creating default account:', newAccountError);
+                    setIsLoading(false);
+                    return;
+                }
+                finalAccounts = [newAccountData];
+            }
+
+            // Fetch all transactions for the current user
+            const { data: transactionsData, error: transactionsError } = await supabase
+                .from('transactions')
+                .select('*')
+                .eq('user_id', user.id);
+            
+            if (transactionsError) {
+                console.error('Error fetching transactions:', transactionsError);
+                setIsLoading(false);
+                return;
+            }
+
+            // Group transactions by their account ID for the local state structure
+            const transactionsByAccount: { [accountId: string]: Transaction[] } = {};
+            finalAccounts.forEach(acc => {
+                transactionsByAccount[acc.id] = [];
+            });
+            transactionsData?.forEach(tx => {
+                if (transactionsByAccount[tx.account_id]) {
+                    transactionsByAccount[tx.account_id].push({
+                        ...tx,
+                        date: tx.transaction_date,
+                        companyName: tx.company_name || '',
+                    });
+                }
+            });
+
+            // Restore the last active account for this user or default to the first one
+            const lastActiveId = localStorage.getItem(`activeAccountId_${user.id}`);
+            const activeId = finalAccounts.some(a => a.id === lastActiveId) ? lastActiveId : finalAccounts[0].id;
+
+            setPortfolioData({
+                accounts: finalAccounts,
+                transactions: transactionsByAccount,
+                activeAccountId: activeId,
+            });
+            setIsLoading(false);
+        };
+
+        fetchData();
+    }, [user]);
+
+    // Save data to localStorage as a cache whenever it changes
     useEffect(() => {
         if (portfolioData) {
             localStorage.setItem('portfolioManagerData', JSON.stringify(portfolioData));
+            if (user && portfolioData.activeAccountId) {
+                localStorage.setItem(`activeAccountId_${user.id}`, portfolioData.activeAccountId);
+            }
         }
-    }, [portfolioData]);
+    }, [portfolioData, user]);
 
     const activeAccount = useMemo(() => {
         if (!portfolioData) return null;
@@ -110,10 +155,9 @@ export const Dashboard: React.FC = () => {
                 pos[tx.ticker].shares += tx.shares;
                 pos[tx.ticker].cost += tx.shares * tx.price;
             } else {
-                const prevShares = pos[tx.ticker].shares + tx.shares;
-                const costPerShare = prevShares > 0 ? pos[tx.ticker].cost / prevShares : 0;
+                const costBasisPerShare = pos[tx.ticker].shares > 0 ? pos[tx.ticker].cost / pos[tx.ticker].shares : 0;
+                pos[tx.ticker].cost -= tx.shares * costBasisPerShare;
                 pos[tx.ticker].shares -= tx.shares;
-                pos[tx.ticker].cost -= tx.shares * costPerShare;
             }
             pos[tx.ticker].companyName = tx.companyName;
         });
@@ -215,42 +259,69 @@ export const Dashboard: React.FC = () => {
     }, [positions, activeAccount]);
 
 
-    const handleAddTransaction = async (newTransaction: Omit<Transaction, 'id'>) => {
-        if (!activeAccount || !portfolioData) return;
+    const handleAddTransaction = async (newTransaction: Omit<Transaction, 'id' | 'user_id' | 'account_id'>) => {
+        if (!activeAccount || !portfolioData || !user) return;
         
-        const addedTx = { ...newTransaction, id: uuidv4() };
-        const updatedTransactions = [...activeTransactions, addedTx];
-        
-        let newCash = activeAccount.cash;
-        if (addedTx.type === 'BUY') {
-            newCash -= addedTx.shares * addedTx.price;
-        } else {
-            newCash += addedTx.shares * addedTx.price;
-        }
+        const newCash = activeAccount.cash + (newTransaction.type === 'SELL' ? (newTransaction.shares * newTransaction.price) : -(newTransaction.shares * newTransaction.price));
 
+        const { error: accountUpdateError } = await supabase
+            .from('accounts')
+            .update({ cash: newCash })
+            .eq('id', activeAccount.id);
+
+        if (accountUpdateError) return console.error("Failed to update cash:", accountUpdateError.message);
+
+        const { data: insertedTx, error: txInsertError } = await supabase
+            .from('transactions')
+            .insert({
+                user_id: user.id,
+                account_id: activeAccount.id,
+                ticker: newTransaction.ticker,
+                company_name: newTransaction.companyName,
+                type: newTransaction.type,
+                shares: newTransaction.shares,
+                price: newTransaction.price,
+                transaction_date: newTransaction.date,
+                notes: newTransaction.notes,
+            })
+            .select()
+            .single();
+
+        if (txInsertError || !insertedTx) return console.error("Failed to add transaction:", txInsertError?.message);
+
+        const addedTx: Transaction = { ...insertedTx, date: insertedTx.transaction_date, companyName: insertedTx.company_name || '' };
         const updatedAccount = { ...activeAccount, cash: newCash };
-
+        
         setPortfolioData(prev => ({
             ...prev!,
             accounts: prev!.accounts.map(acc => acc.id === updatedAccount.id ? updatedAccount : acc),
             transactions: {
                 ...prev!.transactions,
-                [activeAccount.id]: updatedTransactions
+                [activeAccount.id]: [...(prev!.transactions[activeAccount.id] || []), addedTx]
             }
         }));
     };
 
     const handleUpdateTransaction = async (updatedTx: Transaction) => {
-        if (!activeAccount || !portfolioData) return;
+         if (!activeAccount || !portfolioData) return;
+
+        const { error } = await supabase
+            .from('transactions')
+            .update({
+                shares: updatedTx.shares,
+                price: updatedTx.price,
+                transaction_date: updatedTx.date,
+                notes: updatedTx.notes
+            })
+            .eq('id', updatedTx.id);
+        
+        if (error) return console.error("Failed to update transaction:", error.message);
         
         const updatedTransactions = activeTransactions.map(tx => tx.id === updatedTx.id ? updatedTx : tx);
         
         setPortfolioData(prev => ({
             ...prev!,
-            transactions: {
-                ...prev!.transactions,
-                [activeAccount.id]: updatedTransactions
-            }
+            transactions: { ...prev!.transactions, [activeAccount.id]: updatedTransactions }
         }));
         setEditingTransaction(null);
     };
@@ -258,31 +329,36 @@ export const Dashboard: React.FC = () => {
     const handleDeleteTransaction = async () => {
         if (!deletingTransaction || !activeAccount || !portfolioData) return;
         
-        const updatedTransactions = activeTransactions.filter(tx => tx.id !== deletingTransaction.id);
+        const newCash = activeAccount.cash + (deletingTransaction.type === 'BUY' ? (deletingTransaction.shares * deletingTransaction.price) : -(deletingTransaction.shares * deletingTransaction.price));
+
+        const { error: accountUpdateError } = await supabase
+            .from('accounts')
+            .update({ cash: newCash })
+            .eq('id', activeAccount.id);
+
+        if (accountUpdateError) return console.error("Failed to update cash on delete:", accountUpdateError.message);
         
-        let newCash = activeAccount.cash;
-        // Revert cash adjustment on delete
-        if (deletingTransaction.type === 'BUY') {
-            newCash += deletingTransaction.shares * deletingTransaction.price;
-        } else {
-            newCash -= deletingTransaction.shares * deletingTransaction.price;
-        }
+        const { error: deleteError } = await supabase.from('transactions').delete().eq('id', deletingTransaction.id);
+        
+        if (deleteError) return console.error("Failed to delete transaction:", deleteError.message);
 
         const updatedAccount = { ...activeAccount, cash: newCash };
+        const updatedTransactions = activeTransactions.filter(tx => tx.id !== deletingTransaction.id);
 
         setPortfolioData(prev => ({
             ...prev!,
             accounts: prev!.accounts.map(acc => acc.id === updatedAccount.id ? updatedAccount : acc),
-            transactions: {
-                ...prev!.transactions,
-                [activeAccount.id]: updatedTransactions
-            }
+            transactions: { ...prev!.transactions, [activeAccount.id]: updatedTransactions }
         }));
         setDeletingTransaction(null);
     };
     
     const handleUpdateCash = async (newCash: number) => {
         if (!activeAccount || !portfolioData) return;
+        const { error } = await supabase.from('accounts').update({ cash: newCash }).eq('id', activeAccount.id);
+
+        if (error) return console.error("Failed to update cash:", error.message);
+        
         const updatedAccount = { ...activeAccount, cash: newCash };
         setPortfolioData(prev => ({ 
             ...prev!, 
@@ -295,7 +371,16 @@ export const Dashboard: React.FC = () => {
     };
 
     const handleAddAccount = async (name: string) => {
-        const newAccount = { id: uuidv4(), name, cash: 0 };
+        if (!user) return;
+        const { data, error } = await supabase
+            .from('accounts')
+            .insert({ user_id: user.id, name, cash: 0 })
+            .select()
+            .single();
+        
+        if (error || !data) return console.error("Failed to add account:", error?.message);
+
+        const newAccount: Account = data;
         setPortfolioData(prev => ({
             accounts: [...prev!.accounts, newAccount],
             transactions: { ...prev!.transactions, [newAccount.id]: [] },
@@ -304,17 +389,22 @@ export const Dashboard: React.FC = () => {
     };
     
     const handleUpdateAccount = async (id: string, name: string) => {
-        const currentAccount = portfolioData?.accounts.find(a => a.id === id);
-        if (!currentAccount) return;
-        const updatedAccount = { ...currentAccount, name };
+        const { error } = await supabase.from('accounts').update({ name }).eq('id', id);
+
+        if (error) return console.error("Failed to update account:", error.message);
+        
         setPortfolioData(prev => ({ 
             ...prev!, 
-            accounts: prev!.accounts.map(acc => acc.id === updatedAccount.id ? updatedAccount : acc)
+            accounts: prev!.accounts.map(acc => acc.id === id ? { ...acc, name } : acc)
         }));
     };
 
     const handleDeleteAccount = async () => {
         if (!deletingAccount || !portfolioData || portfolioData.accounts.length <= 1) return;
+        
+        const { error } = await supabase.from('accounts').delete().eq('id', deletingAccount.id);
+
+        if (error) return console.error("Failed to delete account:", error.message);
         
         const newAccounts = portfolioData.accounts.filter(acc => acc.id !== deletingAccount.id);
         const newTransactions = { ...portfolioData.transactions };
@@ -329,61 +419,16 @@ export const Dashboard: React.FC = () => {
         setDeletingAccount(null);
     };
 
-    const getImportMessage = (data: any) => {
-        if (data && data.accounts && data.transactions) {
-            return "This will replace ALL your data with the contents of this full backup file. Are you sure?";
-        }
-        if (data && data.account && data.transactions) {
-            return `This will replace all transactions and set the cash balance for the active account "${activeAccount?.name}" with the data from this file. Are you sure?`;
-        }
-        return `This will add the transactions from this file to the active account "${activeAccount?.name}". Are you sure?`;
-    };
-    
     const handleImport = async (file: File) => {
-        try {
-            const data = await parseImportedFile(file);
-            setImportConfirmation({ message: getImportMessage(data), data });
-        } catch (error: any) {
-            alert(`Import failed: ${error.message}`);
-        }
+       alert("Import functionality is temporarily disabled while we upgrade our systems.");
     };
-    
-    const confirmImport = async () => {
-        if (!importConfirmation) return;
-        
-        const data = importConfirmation.data;
-        
-        if (data && data.accounts && data.transactions) { // Full restore
-            setPortfolioData(data);
-        } else if (data && data.account && data.transactions) { // Single account restore
-            if (activeAccount) {
-                 const updatedAccount = { ...activeAccount, cash: data.account.cash };
-                 setPortfolioData(prev => ({
-                    ...prev!,
-                    accounts: prev!.accounts.map(acc => acc.id === activeAccount.id ? updatedAccount : acc),
-                    transactions: { ...prev!.transactions, [activeAccount.id]: data.transactions }
-                 }));
-            }
-        } else if (Array.isArray(data)) { // Add transactions
-            if (activeAccount) {
-                 const newTransactions = [...activeTransactions, ...data];
-                 setPortfolioData(prev => ({
-                    ...prev!,
-                    transactions: { ...prev!.transactions, [activeAccount.id]: newTransactions }
-                 }));
-            }
-        }
-        setImportConfirmation(null);
-    }
     
     const handleExport = (format: 'json' | 'csv') => {
-        exportTransactions(activeTransactions, activeAccount, format);
+        alert("Export functionality is temporarily disabled while we upgrade our systems.");
     };
     
     const handleExportAll = (format: 'json' | 'csv') => {
-        if (portfolioData) {
-            exportAllData(portfolioData, format);
-        }
+         alert("Export functionality is temporarily disabled while we upgrade our systems.");
     };
 
     const handleOpenChangelog = () => {
@@ -478,7 +523,7 @@ export const Dashboard: React.FC = () => {
                  <ConfirmationModal
                     isOpen={!!importConfirmation}
                     onClose={() => setImportConfirmation(null)}
-                    onConfirm={confirmImport}
+                    onConfirm={() => {}}
                     title="Confirm Data Import"
                     message={importConfirmation.message}
                 />

@@ -109,6 +109,9 @@ const parseCsv = (csvText: string): Transaction[] => {
         if (id && txObject.ticker) {
             transactions.push({
                 id,
+                // FIX: Add missing properties to conform to Transaction type
+                account_id: txObject.accountId || '', // accountId from "export all" format, fallback to empty
+                user_id: '', // user_id is not available in CSV exports
                 ticker: txObject.ticker,
                 companyName: txObject.companyName,
                 type: txObject.type === 'BUY' || txObject.type === 'SELL' ? txObject.type : 'BUY',

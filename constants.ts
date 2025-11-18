@@ -26,6 +26,9 @@ export const changelog = [
 export const sampleTransactions: Transaction[] = [
   {
     id: '1',
+    // FIX: Add missing properties to conform to Transaction type
+    account_id: 'sample_account_id',
+    user_id: 'sample_user_id',
     ticker: 'AAPL',
     companyName: 'Apple Inc.',
     type: 'BUY',
@@ -36,6 +39,9 @@ export const sampleTransactions: Transaction[] = [
   },
   {
     id: '2',
+    // FIX: Add missing properties to conform to Transaction type
+    account_id: 'sample_account_id',
+    user_id: 'sample_user_id',
     ticker: 'GOOGL',
     companyName: 'Alphabet Inc.',
     type: 'BUY',
@@ -46,6 +52,9 @@ export const sampleTransactions: Transaction[] = [
   },
   {
     id: '3',
+    // FIX: Add missing properties to conform to Transaction type
+    account_id: 'sample_account_id',
+    user_id: 'sample_user_id',
     ticker: 'TSLA',
     companyName: 'Tesla, Inc.',
     type: 'BUY',
@@ -56,6 +65,9 @@ export const sampleTransactions: Transaction[] = [
   },
   {
     id: '4',
+    // FIX: Add missing properties to conform to Transaction type
+    account_id: 'sample_account_id',
+    user_id: 'sample_user_id',
     ticker: 'NVDA',
     companyName: 'NVIDIA Corporation',
     type: 'BUY',
@@ -66,6 +78,9 @@ export const sampleTransactions: Transaction[] = [
   },
   {
     id: '5',
+    // FIX: Add missing properties to conform to Transaction type
+    account_id: 'sample_account_id',
+    user_id: 'sample_user_id',
     ticker: 'TSLA',
     companyName: 'Tesla, Inc.',
     type: 'SELL',
